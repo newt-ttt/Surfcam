@@ -1,0 +1,33 @@
+# OMC agent state
+.omc/
+
+# Markdown docs
+*.md
+
+# Model weights / large binary assets
+*.pt
+*.onnx
+*.engine
+mobileclip2_b.ts
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Env / secrets
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
