@@ -3,6 +3,7 @@
 
 # Markdown docs
 *.md
+!research.md
 
 # Model weights / large binary assets
 *.pt
