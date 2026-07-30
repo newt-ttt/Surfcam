@@ -26,6 +26,7 @@ import math
 import socket
 import struct
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -96,6 +97,26 @@ TILT_SIGN = 1
 
 TUNING_CONFIG_PATH = Path(__file__).resolve().parent.parent / "tracking_tuning.json"
 
+latest_frame = None
+frame_lock = threading.Lock()
+frame_ready = threading.Event()
+running = True
+
+
+def capture_loop(cap):
+    """Runs cap.read() on a background thread so camera I/O wait overlaps
+    with model.track() instead of serializing - mirrors
+    tracking_servo_control.py's receive_loop/frame_lock/frame_ready
+    pattern, just fed by cap.read() instead of a UDP socket."""
+    global latest_frame
+    while running:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        with frame_lock:
+            latest_frame = frame
+        frame_ready.set()
+
 
 def find_camera_index(name_hint: str):
     """Resolve a device index by (partial, case-insensitive) name via DirectShow
@@ -132,6 +153,8 @@ def spring_step(angle, velocity, target_angle, omega_n, zeta, velocity_cap, dt):
 
 
 def main():
+    global running
+
     if len(sys.argv) < 2:
         raise SystemExit("Usage: python mobile_tracking_servo_control.py <pi-ip> [servo_port]")
 
@@ -158,6 +181,9 @@ def main():
     for _ in range(15):
         cap.read()
 
+    capturer = threading.Thread(target=capture_loop, args=(cap,), daemon=True)
+    capturer.start()
+
     servo_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     tuning = TuningConfig.load(TUNING_CONFIG_PATH)
@@ -177,10 +203,22 @@ def main():
 
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
-                print("Failed to grab frame")
+            got_new = frame_ready.wait(timeout=0.5)
+            key = cv2.waitKey(1) & 0xFF  # checking for q or a input, also pumps the curve editor window
+            if key == ord("q"):
                 break
+            if key == ord("a"):
+                auto_tracking = not auto_tracking
+                print(f"Auto-tracking: {'ON' if auto_tracking else 'OFF'}")
+
+            if not got_new:
+                continue
+            frame_ready.clear()
+
+            with frame_lock:
+                frame = latest_frame.copy() if latest_frame is not None else None
+            if frame is None:
+                continue
 
             now = time.time()
             dt = min(now - prev_time, 0.2)  # cap dt so a stall/breakpoint can't fling the spring
@@ -282,14 +320,8 @@ def main():
 
             cv2.imshow("Surfcam prototype - local closed-loop tracking", frame)
             editor.render()
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                break
-            if key == ord("a"):
-                auto_tracking = not auto_tracking
-                print(f"Auto-tracking: {'ON' if auto_tracking else 'OFF'}")
     finally:
+        running = False
         cap.release()
         servo_sock.close()
         cv2.destroyAllWindows()
