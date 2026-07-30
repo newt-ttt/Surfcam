@@ -1,8 +1,6 @@
 # BoT-SORT with global motion compensation DISABLED (gmc_method: none).
-# ~37ms/frame saved. Only valid while the camera is stationary/decoupled
-# from the servos (mobile_tracking_servo_control.py) - re-enable
-# (gmc_method: sparseOptFlow) once the camera rides the pan-tilt rig it
-# steers, see research.md's GMC section.
+# ~37ms/frame saved. Confirmed fine on the physical panning rig too, not
+# just this stationary-camera test - see research.md's GMC section.
 # Pass to model.track(tracker="botsort_nogmc.yaml").
 
 tracker_type: botsort

@@ -1043,15 +1043,11 @@ Revisiting the [Tracking Pipeline for Surf](#tracking-pipeline-for-surf) two-sta
 
 The wide-scan cadence and crop `imgsz` are knobs to tune against whatever compute is actually available, the same way `imgsz`, the GMC toggle, and capture threading were tuned during prototyping - the pipeline's viability doesn't depend on a specific hardware pick made in advance.
 
-### GMC (Global Motion Compensation) Must Come Back for the Full-Scale Rig
+### GMC (Global Motion Compensation) Not Needed Even While Panning
 
-`botsort_nogmc.yaml` (disabling BoT-SORT's `sparseOptFlow` GMC step, ~2x tracker speedup, ~37ms/frame saved) was validated safe **only** for `mobile_tracking_servo_control.py`'s specific test setup, where the analyzed camera sits stationary and decoupled from the Pi's servos - there's no real camera ego-motion for GMC to compensate for, and target selection (largest box wins) doesn't care about track-ID stability.
+`botsort_nogmc.yaml` disables BoT-SORT's `sparseOptFlow` GMC step (~2x tracker speedup, ~37ms/frame saved). The theoretical concern was that this only holds while the camera is stationary/decoupled from the servos, and would need revisiting once the camera rides the pan-tilt mechanism it steers. Confirmed on the physical rig: it doesn't need revisiting - tracking holds up fine with GMC off even while actively panning, likely because the spring-follow controller keeps servo motion slow/damped and target selection (largest box wins) doesn't depend on stable track IDs.
 
-That reasoning does not carry over to the full-scale rig, where the camera is physically mounted on the pan-tilt mechanism it steers (as in `tracking_servo_control.py` and the Pi 3B + C270 build in [Prototype Hardware — Actual Build](#prototype-hardware--actual-build)). Once the camera moves with every servo command, each frame has real apparent motion from the camera's own rotation, not just the surfer's - without GMC, BoT-SORT's Kalman filter predicts next-frame position from raw pixel velocity that includes that camera motion, which can cause the tracker to lose or reinitialize its own target track on every hard pan, independent of the ID-stability argument that justified disabling it in the first place.
-
-Two consequences for the full-scale build:
-- **Re-enable GMC** (`gmc_method: sparseOptFlow`, i.e. Ultralytics' default `botsort.yaml`) once camera and servos are coupled again.
-- **Budget CPU headroom for it explicitly.** GMC's `sparseOptFlow` (corner detection + optical flow + RANSAC affine fit) runs on the host CPU via OpenCV - it doesn't touch whichever AI accelerator handles the YOLO forward pass, so it's a cost that lands on host CPU choice specifically, on top of whatever the accelerator table above budgets for the neural net itself.
+Whether it's worth applying elsewhere depends on the bottleneck, not just correctness: it was a big win on the weak laptop (CPU-bound). On the desktop path (`tracking_servo_control.py`), FPS is already capped by the Pi camera's own bandwidth (~19-20fps ceiling, not tracker CPU cost), so trimming GMC there wouldn't raise the achieved FPS - not applied there for that reason.
 
 ## Sources
 
