@@ -1,9 +1,21 @@
 # BoT-SORT with global motion compensation DISABLED (gmc_method: none).
 # Same as ultralytics' default botsort.yaml except GMC is off - the
-# sparseOptFlow feature-matching GMC is expensive on this hardware and
-# throws "not enough matching points" on low-texture scenes, while its
-# benefit (camera-motion-aware ID association) is marginal here since the
-# tracker just picks the largest box each frame regardless of ID.
+# sparseOptFlow feature-matching GMC is expensive on this hardware
+# (~37ms/frame) and throws "not enough matching points" on low-texture
+# scenes, while its benefit (camera-motion-aware association) is marginal
+# for mobile_tracking_servo_control.py specifically: that script's camera
+# sits stationary on the test machine, decoupled from the Pi's servos, so
+# there's no real camera ego-motion for GMC to compensate for, and target
+# selection just picks the largest box each frame regardless of ID.
+#
+# This does NOT generalize to tracking_servo_control.py or the full-scale
+# rig, where the camera is physically mounted on the pan-tilt mechanism it
+# steers - every servo move injects real apparent motion into the frame,
+# which is exactly what GMC exists to correct for. Re-enable GMC
+# (gmc_method: sparseOptFlow, i.e. use ultralytics' default botsort.yaml)
+# once the camera and servos are coupled again, and budget CPU headroom
+# for it - GMC runs on the host CPU via OpenCV regardless of which AI
+# accelerator handles the YOLO forward pass.
 # Pass to model.track(tracker="botsort_nogmc.yaml").
 
 tracker_type: botsort

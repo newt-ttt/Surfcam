@@ -103,8 +103,10 @@ TILT_SIGN = 1
 TUNING_CONFIG_PATH = Path(__file__).resolve().parent.parent / "tracking_tuning.json"
 
 # BoT-SORT with global motion compensation disabled - GMC's sparseOptFlow
-# was ~37 ms/frame of overhead (over 2x the whole tracker cost) and its
-# benefit is marginal here since we just pick the largest box each frame.
+# was ~37 ms/frame of overhead. Safe to drop ONLY because this script's
+# camera is stationary (decoupled from the Pi's servos) - see
+# botsort_nogmc.yaml's header. Re-enable for any script where the camera
+# actually rides the pan-tilt mechanism it steers.
 TRACKER_CONFIG = str(Path(__file__).resolve().parent.parent / "botsort_nogmc.yaml")
 
 latest_frame = None

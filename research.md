@@ -15,6 +15,7 @@
 - [Opportunities for Improvement](#opportunities-for-improvement)
 - [Recommended Architecture](#recommended-architecture)
 - [Prototyping on Desktop Hardware](#prototyping-on-desktop-hardware)
+- [Prototype Findings & Full-Scale Deployment Considerations (July 2026)](#prototype-findings--full-scale-deployment-considerations-july-2026)
 - [Sources](#sources)
 - [Prototype Implementation & Change Log →](prototype.md)
 
@@ -304,6 +305,8 @@ This validates that real-time surfer detection in open ocean is an engineering p
 | Intel NCS2 (Movidius) | ~15-20 FPS | 1-2.5W | $70 |
 
 For a battery-powered system, the Jetson Orin Nano or a Coral TPU accelerator attached to a Pi offers the best power/performance tradeoff.
+
+> **Update (July 2026):** This table and the Jetson-only recommendation below predate real prototyping data and a 2026 pricing/availability check. See [Prototype Findings & Full-Scale Deployment Considerations](#prototype-findings--full-scale-deployment-considerations-july-2026) for the current picture - notably, Coral is now discontinued, NVIDIA raised Jetson pricing significantly, and a Pi 5 + Hailo-8L is now the leading low-power candidate.
 
 ---
 
@@ -652,13 +655,15 @@ Based on the research, the optimal design for a next-generation surf tracking ca
 - **Enhancement:** Visual marker system (distinctive rashguard color) to boost CV reliability without electronics
 - GPS handles the "which direction to point" problem at 1000+ ft; CV handles "where exactly is the surfer in the frame"
 
-### Compute: NVIDIA Jetson Orin Nano
+### Compute: NVIDIA Jetson Orin Nano (see July 2026 update)
 
 - 40 TOPS AI performance
 - Runs YOLOv8 at 30+ FPS
 - 7-15W power draw
 - Compact form factor
 - Well-supported by NVIDIA (JetPack SDK, TensorRT optimization)
+
+**Update (July 2026):** With real prototype throughput data in hand and a hardware/pricing recheck, a Raspberry Pi 5 + Hailo-8L is now the leading candidate on cost and power, with the Jetson Orin Nano Super as the headroom option if the deployed model grows beyond nano-class. See [Prototype Findings & Full-Scale Deployment Considerations](#prototype-findings--full-scale-deployment-considerations-july-2026) for the full comparison and reasoning.
 
 ### Camera: Sony Block Camera Module (30x) or Similar
 
@@ -991,6 +996,62 @@ The most capable option. Replaces both the Arduino and the webcam streaming prob
 **Continued in [prototype.md](prototype.md)**, which covers the chosen approach (Raspberry Pi 3B), the actual video-over-WiFi implementation log, WiFi latency measurements, what the prototype won't test, Jetson porting notes, and possible future changes.
 
 ---
+
+## Prototype Findings & Full-Scale Deployment Considerations (July 2026)
+
+Findings from running `mobile_tracking_servo_control.py` on a desktop (RTX 3060 Ti) and a weak 2020 laptop (MSI Modern 15, MX330), which sharpen or override some of the assumptions in the sections above.
+
+### Edge AI Compute Hardware — 2026 Update
+
+The original [Compute Hardware for Edge AI](#compute-hardware-for-edge-ai) table and Jetson-only recommendation are stale on two fronts: real throughput numbers now exist from the prototype, and the hardware landscape shifted materially since April 2026.
+
+| Platform | Price | Power | Weight/Size | Realistic YOLO-nano FPS | Ultralytics friction | Availability |
+|---|---|---|---|---|---|---|
+| **Jetson Orin Nano Super** | **$399** (NVIDIA raised Jetson pricing up to 101% in July 2026; was $249) | 7-25W+, configurable | Full SBC + carrier board | ~43-66 FPS (nano-class, INT8/TensorRT); YOLOv8s ~100 FPS FP16 | Best-in-class: official 1-line TensorRT export | Sold direct at the new higher price |
+| **Pi 5 + Hailo-8L (13 TOPS) HAT** | ~$150 ($80 Pi5 + $70 HAT) | Pi5 ~5-8W + Hailo-8L ~1.5W | Standard HAT, light | Hailo's own benchmark: 431 FPS (YOLOv8n)/491 FPS (YOLOv8s) at 640px batch1; real-world single-PCIe-lane numbers on Pi5 land lower but still far above what a smoothed servo loop needs. Nano/small models see proportionally less accelerator speedup (~13-14x over CPU) than medium/large (~24-27x) | Official Ultralytics Hailo export path (.pt to ONNX to HEF) | Actively sold; newer AI HAT+ 2 (Hailo-10H, 40 TOPS) also available at $130 |
+| **Pi 5 + Hailo-8 (26 TOPS) HAT** | ~$190 | Pi5 + ~2.5W | Same | Same ballpark, more headroom | Same | Same |
+| **RK3588 SBC** (Radxa Rock 5B+, Orange Pi 5 Max) | ~$157-220 (Rock 5B+ 8GB) | ~5-8W idle, 9-19W loaded | Full SBC | Inconsistent across sources: YOLOv8 INT8/RKNN ~30 FPS in one benchmark, YOLOv5n 58.8 FPS in another, but a YOLO26n-specific RKNN benchmark on Rock 5B came back at only ~15 FPS - notably weaker, treat with caution until tested on the actual model | Official RKNN export doc as of YOLO26, but still needs an INT8 calibration step | Orange Pi 5 Plus largely vanished from retail in 2026; Radxa Rock 5B+ now the more available option |
+| **Qualcomm QCS6490 dev kit** | Quote-only (no public retail price) | Not published | SMARC module + carrier | AI Hub lists YOLOv8/v11/X as supported on its 13-TOPS Hexagon NPU, no independently verified nano-class FPS found | Requires Qualcomm's own AI Hub/QNN toolchain, not integrated into Ultralytics' export | Not hobbyist-friendly - quote-based procurement |
+| **Google Coral** | Was $60-75 | ~2-4W | USB stick | N/A | TF-Lite only, not a direct Ultralytics export target | **Discontinued by Google** - remaining stock is reseller leftovers. Drop from consideration. |
+
+Given this project only needs a modest FPS floor (the spring-follow controller already tolerates 5-8fps acceptably in real testing), every option above except the QCS6490/Coral has large throughput headroom - the deciding factors are price, power budget, and Ultralytics integration friction rather than raw speed:
+
+- **Pi 5 + Hailo-8L is the leading candidate**: ~$150 all-in, ~6.5-9.5W total marginal draw, official Ultralytics export path, and enormous FPS headroom over what this project actually consumes. Best fit for the ~15-35W total system power budget in [Power](#power).
+- **Jetson Orin Nano Super is the headroom fallback** if the deployed model grows past nano-class (e.g. YOLO26s, see below) or the two-stage detection pipeline runs both stages concurrently rather than on a cadence - but the July 2026 price hike changes the BOM math this doc originally worked out.
+- **RK3588 is the budget option** but its one YOLO26-specific benchmark ran slower than expected; would need direct testing before trusting it for a deployment (not just a prototype).
+
+### Model Size: `yolo26n` vs `yolo26s` for Deployment
+
+The prototype uses `yolo26n` (nano). For an actual deployed unit - not just a desk prototype - `yolo26s` (small) is worth the extra compute given the project's core challenge (surfer is tiny in frame at range): `s`-class models have meaningfully better accuracy than `n`-class, and both leading compute picks above absorb it without becoming the bottleneck (Hailo-8L: YOLOv8s 28.6-55.7 FPS single-stream, up to 80-120 FPS at higher batch sizes; Jetson Orin Nano: YOLOv8s ~100 FPS FP16). RK3588 is the one candidate where this upgrade adds real risk, compounding its already-uncertain YOLO26-class numbers above.
+
+### Capture Resolution (1080p) vs. Inference Resolution (`imgsz`) — Not the Same Cost
+
+A future move to 1920x1080 capture does not by itself increase YOLO's compute cost. Ultralytics always letterboxes/resizes whatever frame it receives down to a fixed `imgsz` (640 by default) before the forward pass - the network's cost is governed by `imgsz`, not source resolution. Capturing at 1080p only helps if the extra resolution survives to the network somehow:
+
+- **Raising `imgsz`** to actually pass more of the 1080p frame through the network is the real compute-cost lever - cost scales roughly with `imgsz²` (e.g. `imgsz=1280` costs ~4x `imgsz=640`), independent of capture resolution.
+- **The two-stage wide/zoom pipeline** (see [Tracking Pipeline for Surf](#tracking-pipeline-for-surf)) gets the resolution benefit more cheaply: a wide 1080p frame locates the surfer roughly, then a cropped region around them is fed to the detector at full resolution - this preserves pixels-on-target for a distant subject without paying `imgsz`-scale cost on the whole frame every frame.
+- Capturing at 1080p while leaving `imgsz=640` and no cropping buys nothing - the extra resolution gets discarded in the resize.
+
+This means hardware sizing for "1080p support" should be scoped to whichever of these two levers actually gets built, not to the capture resolution number itself.
+
+### Two-Stage Wide/Zoom Pipeline: Compute Cost Is a Tunable, Not a Fixed Tax
+
+Revisiting the [Tracking Pipeline for Surf](#tracking-pipeline-for-surf) two-stage design (wide-angle scan to locate, then zoom in and track) with a compute budget in mind:
+
+- **Worst case** - both stages run every frame at full `imgsz` - roughly doubles per-frame compute versus today's single-stage approach.
+- **Realistic design** - the wide scan only needs to re-run when the target isn't already being tracked (on a cadence, or on track loss), while the zoomed stage runs every frame on a small crop at a smaller `imgsz` (e.g. 320, since it's refining a known-ish location rather than hunting for a speck). At a 15fps target with 2 wide passes/sec (640) + 15 crop passes/sec (320, ~1/4 cost), total cost is roughly equivalent to 5-6 full 640-px passes/sec - cheaper than running one naive full-frame detector at 15fps today.
+
+The wide-scan cadence and crop `imgsz` are knobs to tune against whatever compute is actually available, the same way `imgsz`, the GMC toggle, and capture threading were tuned during prototyping - the pipeline's viability doesn't depend on a specific hardware pick made in advance.
+
+### GMC (Global Motion Compensation) Must Come Back for the Full-Scale Rig
+
+`botsort_nogmc.yaml` (disabling BoT-SORT's `sparseOptFlow` GMC step, ~2x tracker speedup, ~37ms/frame saved) was validated safe **only** for `mobile_tracking_servo_control.py`'s specific test setup, where the analyzed camera sits stationary and decoupled from the Pi's servos - there's no real camera ego-motion for GMC to compensate for, and target selection (largest box wins) doesn't care about track-ID stability.
+
+That reasoning does not carry over to the full-scale rig, where the camera is physically mounted on the pan-tilt mechanism it steers (as in `tracking_servo_control.py` and the Pi 3B + C270 build in [Prototype Hardware — Actual Build](#prototype-hardware--actual-build)). Once the camera moves with every servo command, each frame has real apparent motion from the camera's own rotation, not just the surfer's - without GMC, BoT-SORT's Kalman filter predicts next-frame position from raw pixel velocity that includes that camera motion, which can cause the tracker to lose or reinitialize its own target track on every hard pan, independent of the ID-stability argument that justified disabling it in the first place.
+
+Two consequences for the full-scale build:
+- **Re-enable GMC** (`gmc_method: sparseOptFlow`, i.e. Ultralytics' default `botsort.yaml`) once camera and servos are coupled again.
+- **Budget CPU headroom for it explicitly.** GMC's `sparseOptFlow` (corner detection + optical flow + RANSAC affine fit) runs on the host CPU via OpenCV - it doesn't touch whichever AI accelerator handles the YOLO forward pass, so it's a cost that lands on host CPU choice specifically, on top of whatever the accelerator table above budgets for the neural net itself.
 
 ## Sources
 
