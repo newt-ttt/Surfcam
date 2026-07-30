@@ -16,6 +16,7 @@
 - [Recommended Architecture](#recommended-architecture)
 - [Prototyping on Desktop Hardware](#prototyping-on-desktop-hardware)
 - [Prototype Findings & Full-Scale Deployment Considerations (July 2026)](#prototype-findings--full-scale-deployment-considerations-july-2026)
+  - [UWB as a GPS Alternative for Coarse Tracking](#uwb-as-a-gps-alternative-for-coarse-tracking)
 - [Sources](#sources)
 - [Prototype Implementation & Change Log →](prototype.md)
 
@@ -247,6 +248,8 @@ AI-powered PTZ webcams with gesture control and auto-tracking.
 ### 5. Ultra-Wideband (UWB) Tracking
 
 A newer alternative to GPS for wearable tracking with centimeter-level accuracy, but limited to ~200m range - insufficient for surf.
+
+> **Update (July 2026):** The ~200m figure is generic-consumer-hardware, not a hard UWB ceiling - purpose-built modules already demonstrate 500m, and the tag side can be more minimal than a GPS tag. See [UWB as a GPS Alternative](#uwb-as-a-gps-alternative-for-coarse-tracking).
 
 ### 6. High-Contrast Visual Marker
 
@@ -655,6 +658,8 @@ Based on the research, the optimal design for a next-generation surf tracking ca
 - **Enhancement:** Visual marker system (distinctive rashguard color) to boost CV reliability without electronics
 - GPS handles the "which direction to point" problem at 1000+ ft; CV handles "where exactly is the surfer in the frame"
 
+**Update (July 2026):** Consider UWB ranging in place of GPS - see [UWB as a GPS Alternative](#uwb-as-a-gps-alternative-for-coarse-tracking) for the range/hardware tradeoffs and a cleaner division of labor (UWB for range/identity, CV for bearing at all ranges).
+
 ### Compute: NVIDIA Jetson Orin Nano (see July 2026 update)
 
 - 40 TOPS AI performance
@@ -1049,8 +1054,33 @@ The wide-scan cadence and crop `imgsz` are knobs to tune against whatever comput
 
 Whether it's worth applying elsewhere depends on the bottleneck, not just correctness: it was a big win on the weak laptop (CPU-bound). On the desktop path (`tracking_servo_control.py`), FPS is already capped by the Pi camera's own bandwidth (~19-20fps ceiling, not tracker CPU cost), so trimming GMC there wouldn't raise the achieved FPS - not applied there for that reason.
 
+### UWB as a GPS Alternative for Coarse Tracking
+
+The [Ultra-Wideband](#5-ultra-wideband-uwb-tracking) entry's "~200m, insufficient for surf" verdict reflects generic consumer UWB (phone-tag-class hardware). Revisited with actual chip/product data:
+
+**Range.** UWB's regulated power (FCC: -41.3 dBm/MHz EIRP, uniform across the whole 3.1-10.6GHz allocation - low band gets no extra allowance) means range comes from antenna gain and frequency, not extra transmit power. Purpose-built modules with a power amplifier and directional antenna already claim 500m on standard hardware - [Inpixon's nanoANQ Chirp anchor](https://www.inpixon.com/technology/rtls/anchors) and the [Makerfabs/how2electronics ESP32-DW3000 module](https://github.com/Makerfabs/Makerfabs-ESP32-UWB-DW3000) both cite ~500m outdoor. 500m (~1,640ft) already covers most realistic lineups; a directional antenna pointed at the water fits this project's tripod setup naturally (EIRP is measured post-antenna-gain, so a gain antenna raises effective power in the pointed direction within the legal cap).
+
+**Low band vs. high band.** Separately, lower carrier frequency reduces free-space path loss - roughly 7dB less at ~3.5GHz vs ~8GHz for the same distance (Friis equation), worth ~2.3x more range for the same power budget. This is a real, stackable lever on top of the PA+antenna approach above, not a substitute for it. However: **the DW3000 chip (which underlies the demonstrated 500m module above) doesn't support low band at all** - Qorvo's own description is a "6.5GHz-8GHz IR-UWB transceiver IC," fixed to channels 5 and 9. Low band (channels 1-4, ~3.5-6.5GHz per Decawave's datasheet) requires the previous-generation **DW1000**, which brings real costs: ~3x higher power draw than DW3000, no channel 9/Apple U1 interoperability, and uncertain current sourcing (shown discontinued on DigiKey since 2020, though still listed on Qorvo's own site - needs a direct availability check before designing around it). Recommendation: prototype with DW3000 + PA + gain antenna first (proven 500m, better power/sourcing); only chase DW1000 + low band if 500m proves insufficient in real beach testing.
+
+**Hardware split - land-heavy, tag-minimal.** Whatever range-extension approach is used (PA, gain antenna, low band), the added complexity is entirely anchor-side. The wearable tag stays simple regardless: a DW3000-class chip in sleep mode draws under 1.3µA, and tags built on it are reported running years on a single CR2032 coin cell at modest ranging rates, in a package a few mm across. This is a genuine improvement over a GPS tag - UWB ranging is request/response (the tag replies to anchor polls), while GPS requires the tag to run its own continuous satellite-acquisition receiver, which is inherently more power-hungry.
+
+**Bearing: skip AoA, let CV handle it.** Getting *direction* (not just range) from UWB requires Angle of Arrival, which needs a multi-antenna array at the anchor (still land-side, doesn't burden the tag) - but AoA accuracy degrades badly with range: even a good ~2.4° error becomes ~20m of lateral position error at 500m (error scales as `distance x tan(angle error)`). Since the CV/servo system already owns bearing at all ranges, the cleaner design is **single-anchor ranging-only UWB** (simplest anchor, no antenna array) supplying just distance and identity confirmation (which surfer in frame is "yours," informs zoom level, aids re-acquisition after track loss) - CV keeps the direction job it already does.
+
+**What this fixes vs. doesn't, relative to GPS:** centimeter-level ranging (vs. GPS's ~3-5m, the source of the "jitter at zoom" problem in [SOLOSHOT3](#soloshot3-soloshotcom)'s reviews) and much faster update rates (tens-to-hundreds Hz vs. GPS's 1-10Hz). It does **not** fix GPS's worst failure mode - signal loss when the surfer submerges - since that's an RF-through-water problem common to any RF tag, UWB included; the same re-acquisition mitigation in [Intelligent Re-acquisition After Wipeouts](#3-intelligent-re-acquisition-after-wipeouts) still applies.
+
+**Placement:** body-worn (armband/ankle, matching Soloshot's proven form factor) over board-mounted, despite the board being an architecturally easier attach point - during a wipeout the board and surfer often separate, and tracking should follow the person, not an unmanned floating board.
+
 ## Sources
 
+- [UWB Frequencies, Channels, Bandwidth, and EIRP Explained - RF Wireless World](https://www.rfwireless-world.com/Terminology/UWB-Frequencies-channels-UWB-bandwidth-UWB-EIRP.html)
+- [FCC UWB Emission Limits - Ultra-Wideband Communications Fundamentals](https://www.oreilly.com/library/view/ultra-wideband-communications-fundamentals/0131463268/0131463268_ch01lev1sec10.html)
+- [Inpixon nanoANQ Chirp - UWB Anchors for RTLS](https://www.inpixon.com/technology/rtls/anchors)
+- [ESP32 DW3000 UWB Module Achieving 500m Range - how2electronics](https://how2electronics.com/esp32-dw3000-uwb-module-achieving-500m-range/)
+- [Makerfabs ESP32 UWB DW3000 - GitHub](https://github.com/Makerfabs/Makerfabs-ESP32-UWB-DW3000)
+- [DWM3000 UWB Module Delivers 10cm Accuracy - Symmetry Electronics](https://www.symmetryelectronics.com/blog/dwm3000-uwb-module-delivers-10cm-accuracy-symmetry-blog/)
+- [Angle of Arrival and Centimeter Distance Estimation on a Smart UWB Sensor Node - arXiv](https://arxiv.org/pdf/2312.13672)
+- [DW3000 Datasheet - Qorvo/Mouser](https://www.mouser.com/pdfDocs/DW3000DataSheet5.pdf)
+- [All Decawave products show discontinued on DigiKey - Qorvo Tech Forum](https://forum.qorvo.com/t/all-decawave-products-show-to-be-discontinued-on-digikey/8456)
 - [Soloshot Official](https://soloshot.com/)
 - [Soloshot 3 Review & Tips - da Surf Engine](https://www.dasurfengine.com/blog/soloshot-3-review-tips-tricks-surf-training-benefits/)
 - [Soloshot Trustpilot Reviews](https://www.trustpilot.com/review/soloshot.com)
