@@ -1,0 +1,22 @@
+# BoT-SORT with global motion compensation DISABLED (gmc_method: none).
+# Same as ultralytics' default botsort.yaml except GMC is off - the
+# sparseOptFlow feature-matching GMC is expensive on this hardware and
+# throws "not enough matching points" on low-texture scenes, while its
+# benefit (camera-motion-aware ID association) is marginal here since the
+# tracker just picks the largest box each frame regardless of ID.
+# Pass to model.track(tracker="botsort_nogmc.yaml").
+
+tracker_type: botsort
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 30
+match_thresh: 0.8
+fuse_score: True
+
+gmc_method: none  # <-- the change: no global motion compensation
+
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: False
+model: auto

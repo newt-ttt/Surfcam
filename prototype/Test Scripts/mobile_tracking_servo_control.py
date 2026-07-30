@@ -53,6 +53,11 @@ else:
 CAMERA_NAME_HINT = "C270"
 FALLBACK_CAMERA_INDEX = 0  # laptop's built-in webcam, if no C270 is found
 
+# Show the live-draggable speed-curve editor window. Off by default - the JSON
+# tuning is used as-is; set True to visually tune the curve (edits persist to
+# tracking_tuning.json). Disabling it also drops a second imshow per frame.
+SHOW_CURVE_UI = False
+
 DEFAULT_SERVO_PORT = 6000
 
 PAN = "pan"
@@ -96,6 +101,11 @@ PAN_SIGN = -1
 TILT_SIGN = 1
 
 TUNING_CONFIG_PATH = Path(__file__).resolve().parent.parent / "tracking_tuning.json"
+
+# BoT-SORT with global motion compensation disabled - GMC's sparseOptFlow
+# was ~37 ms/frame of overhead (over 2x the whole tracker cost) and its
+# benefit is marginal here since we just pick the largest box each frame.
+TRACKER_CONFIG = str(Path(__file__).resolve().parent.parent / "botsort_nogmc.yaml")
 
 latest_frame = None
 frame_lock = threading.Lock()
@@ -187,7 +197,7 @@ def main():
     servo_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     tuning = TuningConfig.load(TUNING_CONFIG_PATH)
-    editor = CurveEditor(tuning, TUNING_CONFIG_PATH)
+    editor = CurveEditor(tuning, TUNING_CONFIG_PATH) if SHOW_CURVE_UI else None
 
     pan_angle = DEFAULT_ANGLE[PAN]
     tilt_angle = DEFAULT_ANGLE[TILT]
@@ -198,13 +208,14 @@ def main():
     auto_tracking = False
     print("Auto-tracking is OFF. Press 'a' to enable, 'q' to quit.")
 
-    prev_time = time.time()
-    fps = 0.0
+    prev_time = time.perf_counter()  # perf_counter: monotonic, sub-us - time.time()'s
+    fps = 0.0                        # ~15ms Windows resolution let dt round to 0 (=> 1e6 fps spike)
+    first_frame = True               # first interval is only startup, not a real frame - skip it
 
     try:
         while True:
             got_new = frame_ready.wait(timeout=0.5)
-            key = cv2.waitKey(1) & 0xFF  # checking for q or a input, also pumps the curve editor window
+            key = cv2.waitKey(1) & 0xFF  # checking for q or a input
             if key == ord("q"):
                 break
             if key == ord("a"):
@@ -220,7 +231,7 @@ def main():
             if frame is None:
                 continue
 
-            now = time.time()
+            now = time.perf_counter()
             dt = min(now - prev_time, 0.2)  # cap dt so a stall/breakpoint can't fling the spring
 
             h, w = frame.shape[:2]
@@ -231,6 +242,7 @@ def main():
                 classes=TRACK_CLASSES,
                 persist=True,
                 verbose=False,
+                tracker=TRACKER_CONFIG,
             )
             result = results[0]
 
@@ -305,11 +317,16 @@ def main():
                 tilt_angle = clamp(tilt_angle, tilt_lo, tilt_hi)
 
                 send_servo_command(servo_sock, pi_ip, servo_port, pan_angle, tilt_angle)
-                editor.live_marker_x = max(pan_frac, tilt_frac)
-            else:
+                if editor is not None:
+                    editor.live_marker_x = max(pan_frac, tilt_frac)
+            elif editor is not None:
                 editor.live_marker_x = None
 
-            fps = 0.9 * fps + 0.1 * (1.0 / max(dt, 1e-6))
+            if first_frame:
+                first_frame = False  # first interval spans startup, not a real frame period
+            else:
+                inst_fps = 1.0 / max(dt, 1e-6)
+                fps = inst_fps if fps == 0.0 else 0.9 * fps + 0.1 * inst_fps  # seed, then smooth
             prev_time = now
             status = "ON" if auto_tracking else "OFF"
             cv2.putText(frame, f"FPS: {fps:.1f}  auto-tracking: {status}", (20, 30),
@@ -319,7 +336,8 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2)
 
             cv2.imshow("Surfcam prototype - local closed-loop tracking", frame)
-            editor.render()
+            if editor is not None:
+                editor.render()
     finally:
         running = False
         cap.release()
