@@ -1092,6 +1092,7 @@ Accuracy: reported real-world AoA performance is ~2.4° in good conditions, whic
 - [DW3120 - Qorvo](https://www.qorvo.com/products/p/DW3120)
 - [DWM3001CDK AoA capabilities and MCU integration - Qorvo Tech Forum](https://forum.qorvo.com/t/dwm3001cdk-aoa-capabilities-and-mcu-integration/24465)
 - [Low-Profile Triple-Element Antenna for UWB Indoor Localization - triple-element AoA azimuth/elevation](https://www.jees.kr/upload/pdf/jees-2023-1-r-145.pdf)
+- [Makerfabs MaUWB_STM32 AOA Development Kit](https://www.makerfabs.com/mauwb-stm32-aoa-development-kit.html)
 - [Soloshot Official](https://soloshot.com/)
 - [Soloshot 3 Review & Tips - da Surf Engine](https://www.dasurfengine.com/blog/soloshot-3-review-tips-tricks-surf-training-benefits/)
 - [Soloshot Trustpilot Reviews](https://www.trustpilot.com/review/soloshot.com)
