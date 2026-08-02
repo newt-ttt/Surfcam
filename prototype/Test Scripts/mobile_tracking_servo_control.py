@@ -79,7 +79,7 @@ DEFAULT_ANGLE = {
 
 PACKET_FORMAT_OUT = struct.Struct(">ff")  # pan_angle, tilt_angle sent to the Pi
 
-DEADBAND_PX = 20
+DEADBAND_PX = 0  # zeroed out for now - re-tune once servo command smoothing is in place
 
 # See tracking_servo_control.py's module docstring for the FOV-split
 # rationale - same camera, same math.

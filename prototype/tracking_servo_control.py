@@ -84,7 +84,7 @@ DEFAULT_ANGLE = {
 
 PACKET_FORMAT_OUT = struct.Struct(">ff")  # pan_angle, tilt_angle sent to the Pi
 
-DEADBAND_PX = 20
+DEADBAND_PX = 0  # zeroed out for now - re-tune once servo command smoothing is in place
 
 # Logitech C270 spec is 55 degrees diagonal FOV on current-revision units
 # (older units spec 60 - unconfirmed which this camera actually is). Split

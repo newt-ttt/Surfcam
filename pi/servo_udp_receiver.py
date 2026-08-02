@@ -20,6 +20,13 @@ tilt_angle), matching prototype/servo_control_test.py's PACKET_FORMAT.
 Both angles are clamped to SAFE_RANGE before being applied here - a
 stray, corrupted, or buggy command from the sender can't drive a servo
 past its mapped-safe limits.
+
+Each packet is an absolute target angle, but packets only arrive at the
+sender's frame rate (10-20Hz). Rather than snapping the PWM duty cycle
+straight to each new target, a fixed-rate tick loop (TICK_HZ) slews the
+current angle toward the latest received target at up to SLEW_DEG_S -
+see smooth_pan_test.py for the same stepping idea applied to a fixed sweep
+instead of incoming commands.
 """
 
 import socket
@@ -54,6 +61,15 @@ SAFE_RANGE = {
 DEFAULT_PORT = 6000
 PACKET_FORMAT = struct.Struct(">ff")  # pan_angle, tilt_angle
 
+# Interpolation tick rate - independent of both the PWM frequency and the
+# sender's frame rate, just needs to be fast enough that stepping looks
+# continuous. SLEW_DEG_S should stay above tracking_tuning.json's configured
+# max speeds so this never lags behind the spring-follow controller, it
+# should only be filling the gaps between sparse command arrivals.
+TICK_HZ = 50
+TICK_INTERVAL_S = 1 / TICK_HZ
+SLEW_DEG_S = 90
+
 # Default angle applied on startup, before any command has arrived. Tilt
 # defaults to -30, not the mechanical calibration zero (0) - with the
 # camera actually mounted, -30 is what puts the camera roughly straight
@@ -75,6 +91,12 @@ def clamp(value, lo, hi):
     return max(lo, min(hi, value))
 
 
+def step_toward(current, target, max_step):
+    if current < target:
+        return min(current + max_step, target)
+    return max(current - max_step, target)
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
 
@@ -89,23 +111,31 @@ def main():
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("0.0.0.0", port))
+    sock.settimeout(TICK_INTERVAL_S)
     print(f"Listening for servo commands on port {port}")
+
+    current_angle = dict(DEFAULT_ANGLE)
+    target_angle = dict(DEFAULT_ANGLE)
+    max_step = SLEW_DEG_S * TICK_INTERVAL_S
 
     try:
         while True:
-            data, addr = sock.recvfrom(PACKET_FORMAT.size)
-            if len(data) != PACKET_FORMAT.size:
-                continue
-            pan_angle, tilt_angle = PACKET_FORMAT.unpack(data)
+            try:
+                data, addr = sock.recvfrom(PACKET_FORMAT.size)
+                if len(data) == PACKET_FORMAT.size:
+                    pan_angle, tilt_angle = PACKET_FORMAT.unpack(data)
+                    pan_lo, pan_hi = SAFE_RANGE[PAN_CHANNEL]
+                    tilt_lo, tilt_hi = SAFE_RANGE[TILT_CHANNEL]
+                    target_angle[PAN_CHANNEL] = clamp(pan_angle, pan_lo, pan_hi)
+                    target_angle[TILT_CHANNEL] = clamp(tilt_angle, tilt_lo, tilt_hi)
+                    print(f"from {addr[0]}: pan={target_angle[PAN_CHANNEL]:.1f} "
+                          f"tilt={target_angle[TILT_CHANNEL]:.1f}")
+            except socket.timeout:
+                pass
 
-            pan_lo, pan_hi = SAFE_RANGE[PAN_CHANNEL]
-            tilt_lo, tilt_hi = SAFE_RANGE[TILT_CHANNEL]
-            pan_angle = clamp(pan_angle, pan_lo, pan_hi)
-            tilt_angle = clamp(tilt_angle, tilt_lo, tilt_hi)
-
-            pwms[PAN_CHANNEL].change_duty_cycle(angle_to_duty_percent(pan_angle))
-            pwms[TILT_CHANNEL].change_duty_cycle(angle_to_duty_percent(tilt_angle))
-            print(f"from {addr[0]}: pan={pan_angle:.1f} tilt={tilt_angle:.1f}")
+            for channel in (PAN_CHANNEL, TILT_CHANNEL):
+                current_angle[channel] = step_toward(current_angle[channel], target_angle[channel], max_step)
+                pwms[channel].change_duty_cycle(angle_to_duty_percent(current_angle[channel]))
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:

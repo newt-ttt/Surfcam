@@ -32,5 +32,5 @@
   "omega_n": 6.0,
   "zeta": 1.0,
   "pan_max_speed_deg_s": 30.0,
-  "tilt_max_speed_deg_s": 8.0
+  "tilt_max_speed_deg_s": 16.0
 }
