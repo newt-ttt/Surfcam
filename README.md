@@ -42,7 +42,7 @@ This is the prototype loop, built to validate detection/tracking/control on chea
 **Control**
 - A spring-follow controller (critically-damped step) instead of a PID loop, converting pixel offset into pan/tilt angle
 - (Phased out) A closed-form logistic-sigmoid speed-cap curve (`speed_curve.py`), live-tunable via an OpenCV trackbar UI, saved to `tracking_tuning.json`
-- Pi-side command interpolation — a fixed 50Hz slew-rate loop smooths the servo's discrete, lower-rate UDP updates into continuous motion instead of visibly stepping
+- Pi-side command interpolation - a fixed 50Hz slew-rate loop smooths the servo's discrete, lower-rate UDP updates into continuous motion instead of visibly stepping
 
 **Networking**
 - Raw UDP sockets (Python `socket`/`struct`) for both the video stream and servo commands
@@ -54,14 +54,14 @@ This is the prototype loop, built to validate detection/tracking/control on chea
 - `ultralytics`'s training API for fine-tuning the surf-specific model lineages (`surfai_v9`, `doube2`)
 
 **Platform**
-- Python end-to-end — Windows desktop (CUDA GPU for inference) and Raspberry Pi OS
+- Python end-to-end - Windows desktop (CUDA GPU for inference) and Raspberry Pi OS
 - `pygrabber` for DirectShow webcam enumeration on the Windows side
 
 ## Hardware
 
 **Prototype (current)**
 - Raspberry Pi 3B with full-size USB, built-in WiFi; streams video and drives servos directly
-- Logitech C270 webcam — 720p/30fps, USB, 60 degree FOV
+- Logitech C270 webcam - 720p/30fps, USB, 60 degree FOV
 - SG90 micro servo (tilt) + MG90 micro servo (pan) (MG90 has metal gears)
 - ThtRht nylon anti-vibration pan-tilt bracket, webcam mounted via hot glue (amazon link needed)
 - Servos wired to Pi GPIO with hardware PWM (`rpi_hardware_pwm`): pan on GPIO 17, tilt on GPIO 27 for later reference
