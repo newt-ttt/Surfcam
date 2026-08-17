@@ -1,11 +1,9 @@
 # Surfcam
 
-<!-- One-line tagline: what it is and who it's for. -->
+Open-source, autonomous pan-tilt camera rig that detects and tracks a surfer in the water, so you can film a session hands-free.
 
-<!-- Optional: badges (build status, license, python version, etc.) -->
+<!-- Hero image/GIF/demo link goes here once there's a clip worth leading with - a media/detection_videos clip is a good candidate. -->
 
-<!-- Optional: hero image, GIF, or link to a demo video/reel. -->
- (this part got deleted when I forgot to save)
 ## Overview
 
 <!-- What problem this solves, who it's for, and why it exists. 2-4 sentences. -->
@@ -97,16 +95,68 @@ The latest model does well with detecting and tracking surfers on a wave, but mo
 
 Metrics are from the final epoch's validation pass, as logged by Ultralytics to each run's `results.csv`. The live tracking pipeline only consumes the `surfer`/`surfer_ride` classes out of doube2's 7 (the wave-state classes are trained for future use but not yet acted on).
 
+## Project Status & Roadmap
+
+```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'sectionBkgColor': '#faf6ec',
+    'sectionBkgColor2': '#f0e6d2',
+    'altSectionBkgColor': '#f0e6d2',
+    'taskBkgColor': '#cfe0f3',
+    'taskBorderColor': '#93b3dd',
+    'activeTaskBkgColor': '#ffe0b2',
+    'activeTaskBorderColor': '#e0a868',
+    'doneTaskBkgColor': '#c3e6cb',
+    'doneTaskBorderColor': '#7fb28c',
+    'critBkgColor': '#f5c6cb',
+    'critBorderColor': '#d98a94',
+    'taskTextColor': '#4a4a4a',
+    'taskTextOutsideColor': '#ffffff',
+    'taskTextLightColor': '#4a4a4a',
+    'gridColor': '#e3dcc9',
+    'todayLineColor': '#d98a94'
+  },
+  'gantt': {
+    'leftPadding': 150,
+    'barHeight': 22,
+    'barGap': 6,
+    'topPadding': 50
+  }
+}}%%
+gantt
+    title Surfcam Roadmap
+    dateFormat YYYY-MM-DD
+    axisFormat %b %d
+
+    section Research & Planning
+    Commercial landscape + hardware architecture research   :done, research, 2026-07-01, 18d
+
+    section Prototype Build
+    Pi 3B + C270 + servo bring-up                            :done, bringup, after research, 3d
+    Video-over-WiFi UDP streaming                             :done, streaming, 2026-07-22, 1d
+    Live detection/tracking + spring-follow control loop       :done, controlloop, after streaming, 17d
+
+    section Surf-Specific Models
+    surfai_v9 fine-tune (n/s/m)                               :done, surfai, 2026-08-09, 2d
+    doube2 fine-tune + hard-negative retrain                  :done, doube2, 2026-08-11, 1d
+    Tracker bug fix (GMC) + replay validation                 :done, gmcfix, 2026-08-15, 2d
+    Repo cleanup + docs                                        :active, cleanup, 2026-08-17, 1d
+
+    section Next Up
+    GPS tag + low-power radio telemetry                       :gps, after cleanup, 21d
+    Target hardware migration (Jetson/Hailo, a6700, gimbal)    :target, after gps, 28d
+```
+
+Dates for completed work are real; the "Next Up" durations are rough placeholders, not committed timelines. Current focus: Getting GPS integrated with the system to test aiming accuracy at range with pure GPS aiming, without CV for now.
+
 ## Results
 
 <!-- Quantitative results (accuracy, FPS, latency) and/or qualitative before/after comparisons. -->
 
-## Project Status & Roadmap
-
-<!-- What's done, what's in progress, what's next. -->
-
 ## Getting Started
-
+TBD
 <!-- Prerequisites, installation, and how to run it. -->
 
 ## Lessons Learned
