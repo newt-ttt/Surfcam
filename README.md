@@ -123,7 +123,8 @@ Metrics are from the final epoch's validation pass, as logged by Ultralytics to 
     'barHeight': 22,
     'barGap': 6,
     'topPadding': 50
-  }
+  },
+  'themeCSS': '.activeText0, .activeText1, .activeText2, .activeText3 { fill: #ffffff !important; }'
 }}%%
 gantt
     title Surfcam Roadmap
