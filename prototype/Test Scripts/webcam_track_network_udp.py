@@ -31,8 +31,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-MODEL_NAME = str(MODELS_DIR / "yolo26n.pt")
+MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "training" / "models"
+MODEL_NAME = str(MODELS_DIR / "base_coco" / "yolo26n.pt")
 PERSON_CLASS_ID = 0
 DEFAULT_PORT = 5005
 RECV_BUFFER_SIZE = 65536

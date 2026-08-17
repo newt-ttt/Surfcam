@@ -52,13 +52,13 @@ from speed_curve import CurveEditor, TuningConfig
 # "face" for indoor testing, "person" for outdoor tracking.
 TARGET_MODE = "person"
 
-MODELS_DIR = Path(__file__).resolve().parent / "models"
+MODELS_DIR = Path(__file__).resolve().parent.parent / "training" / "models"
 
 if TARGET_MODE == "face":
-    MODEL_NAME = str(MODELS_DIR / "face_yolov8n.pt")
+    MODEL_NAME = str(MODELS_DIR / "face" / "face_yolov8n.pt")
     TRACK_CLASSES = None  # face model is already single-class
 else:
-    MODEL_NAME = str(MODELS_DIR / "yolo26n.pt")
+    MODEL_NAME = str(MODELS_DIR / "base_coco" / "yolo26n.pt")
     TRACK_CLASSES = [0]  # COCO person class
 
 DEFAULT_VIDEO_PORT = 5005

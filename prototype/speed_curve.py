@@ -1,6 +1,6 @@
 """
-Surfcam prototype - normalized speed-cap curve, backed by a small set of
-draggable control points, plus a live OpenCV editor window for it.
+Surfcam prototype - normalized speed-cap curve, a closed-form logistic
+sigmoid parametrized by (k, x0), plus a live OpenCV editor window for it.
 
 The curve maps a 0..1 pixel-distance fraction (how far off-center a target
 is, relative to that axis's half-frame extent) to a 0..1 speed-cap fraction.
@@ -9,22 +9,32 @@ constant to get an actual velocity cap (deg/s) for its spring-follow
 controller. Pan and tilt reuse the same curve shape; only the max-speed
 scale differs per axis.
 
-Editing: drag a point to move it, double-click empty space to add a point,
-double-click an existing (non-endpoint) point to remove it. Endpoints stay
-pinned to x=0/x=1 (the curve must be defined across the full range) but
-their y value is draggable. Edits apply immediately to the live curve;
-they're written to disk once a drag/edit completes, not on every mouse-move.
+The sigmoid is rescaled to always pass through (0,0)/(1,1) regardless of
+k/x0, so the curve stays defined across the full range no matter how it's
+tuned. k controls steepness, x0 the midpoint. This closed form replaced an
+earlier free-form draggable-point curve - two params are cheap to
+auto-tune later (e.g. Bayesian optimization), where an arbitrary point set
+wouldn't be.
+
+Editing: drag the k/x0 trackbars in the curve window. Edits apply
+immediately to the live curve and are written to disk on every change.
 """
 
 import json
+import math
 
 import cv2
 import numpy as np
 
-DEFAULT_POINTS = [[0.0, 0.0], [1.0, 1.0]]
-POINT_PICK_RADIUS = 0.04  # fraction-space hit radius for grabbing a point
+DEFAULT_K = 12.142
+DEFAULT_X0 = 0.266
 
-WINDOW_NAME = "Speed curve (drag points, dbl-click to add/remove)"
+K_TRACKBAR_NAME = "k x10"
+K_TRACKBAR_MAX = 300   # k range 0.1..30.0, in steps of 0.1
+X0_TRACKBAR_NAME = "x0 x100"
+X0_TRACKBAR_MAX = 100  # x0 range 0.00..1.00, in steps of 0.01
+
+WINDOW_NAME = "Speed curve (k/x0 trackbars)"
 CANVAS_SIZE = (460, 360)  # width, height in pixels
 MARGIN_LEFT = 55   # room for y tick labels + axis title
 MARGIN_RIGHT = 20
@@ -33,45 +43,18 @@ MARGIN_BOTTOM = 55  # room for x tick labels + axis title
 
 
 class SpeedCurve:
-    def __init__(self, points=None):
-        self.points = sorted((list(p) for p in (points or DEFAULT_POINTS)), key=lambda p: p[0])
+    def __init__(self, k=DEFAULT_K, x0=DEFAULT_X0):
+        self.k = k
+        self.x0 = x0
+
+    def _raw(self, x):
+        return 1.0 / (1.0 + math.exp(-self.k * (x - self.x0)))
 
     def value(self, x):
         x = min(max(x, 0.0), 1.0)
-        pts = self.points
-        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-            if x0 <= x <= x1:
-                if x1 == x0:
-                    return y1
-                t = (x - x0) / (x1 - x0)
-                return y0 + t * (y1 - y0)
-        return pts[-1][1]
-
-    def move_point(self, index, x, y):
-        pts = self.points
-        if index in (0, len(pts) - 1):
-            x = pts[index][0]  # endpoints stay pinned to x=0 / x=1
-        else:
-            lo = pts[index - 1][0]
-            hi = pts[index + 1][0]
-            x = min(max(x, lo + 1e-3), hi - 1e-3)
-        pts[index] = [x, min(max(y, 0.0), 1.0)]
-
-    def add_point(self, x, y):
-        x = min(max(x, 0.0), 1.0)
-        y = min(max(y, 0.0), 1.0)
-        self.points.append([x, y])
-        self.points.sort(key=lambda p: p[0])
-
-    def remove_point(self, index):
-        if 0 < index < len(self.points) - 1:
-            del self.points[index]
-
-    def find_near(self, x, y, radius=POINT_PICK_RADIUS):
-        for i, (px, py) in enumerate(self.points):
-            if abs(px - x) <= radius and abs(py - y) <= radius:
-                return i
-        return None
+        lo = self._raw(0.0)
+        hi = self._raw(1.0)
+        return (self._raw(x) - lo) / (hi - lo)
 
 
 class TuningConfig:
@@ -91,7 +74,7 @@ class TuningConfig:
             return config
         data = json.loads(path.read_text())
         config = cls(
-            curve=SpeedCurve(data.get("curve_points")),
+            curve=SpeedCurve(data.get("curve_k", DEFAULT_K), data.get("curve_x0", DEFAULT_X0)),
             omega_n=data.get("omega_n", 6.0),
             zeta=data.get("zeta", 1.0),
             pan_max_speed_deg_s=data.get("pan_max_speed_deg_s", 8.0),
@@ -101,7 +84,8 @@ class TuningConfig:
 
     def save(self, path):
         path.write_text(json.dumps({
-            "curve_points": self.curve.points,
+            "curve_k": self.curve.k,
+            "curve_x0": self.curve.x0,
             "omega_n": self.omega_n,
             "zeta": self.zeta,
             "pan_max_speed_deg_s": self.pan_max_speed_deg_s,
@@ -110,25 +94,26 @@ class TuningConfig:
 
 
 class CurveEditor:
-    """Second OpenCV window for live-dragging the speed curve. Call
-    render() once per main loop iteration, alongside the video window's
-    own imshow/waitKey - both windows are polled by the same waitKey."""
+    """Second OpenCV window for live-tuning the speed curve's k (steepness)
+    and x0 (midpoint) via trackbars. Call render() once per main loop
+    iteration, alongside the video window's own imshow/waitKey - both
+    windows are polled by the same waitKey."""
 
     def __init__(self, config, config_path):
         self.config = config
         self.config_path = config_path
-        self.dragging = None
         self.live_marker_x = None  # set externally each frame; None hides it
         cv2.namedWindow(WINDOW_NAME)
-        cv2.setMouseCallback(WINDOW_NAME, self._on_mouse)
+        cv2.createTrackbar(K_TRACKBAR_NAME, WINDOW_NAME,
+                            int(round(config.curve.k * 10)), K_TRACKBAR_MAX, self._on_trackbar)
+        cv2.createTrackbar(X0_TRACKBAR_NAME, WINDOW_NAME,
+                            int(round(config.curve.x0 * 100)), X0_TRACKBAR_MAX, self._on_trackbar)
 
-    def _to_frac(self, px, py):
-        w, h = CANVAS_SIZE
-        plot_w = w - MARGIN_LEFT - MARGIN_RIGHT
-        plot_h = h - MARGIN_TOP - MARGIN_BOTTOM
-        x = (px - MARGIN_LEFT) / plot_w
-        y = 1.0 - (py - MARGIN_TOP) / plot_h
-        return x, y
+    def _on_trackbar(self, _value):
+        curve = self.config.curve
+        curve.k = max(cv2.getTrackbarPos(K_TRACKBAR_NAME, WINDOW_NAME) / 10.0, 0.1)
+        curve.x0 = cv2.getTrackbarPos(X0_TRACKBAR_NAME, WINDOW_NAME) / 100.0
+        self.config.save(self.config_path)
 
     def _to_px(self, x, y):
         w, h = CANVAS_SIZE
@@ -204,8 +189,9 @@ class CurveEditor:
                 cv2.line(frame, prev, pt, (0, 200, 255), 2)
             prev = pt
 
-        for x, y in curve.points:
-            cv2.circle(frame, self._to_px(x, y), 5, (0, 255, 0), -1)
+        label = f"k={curve.k:.2f}  x0={curve.x0:.2f}"
+        cv2.putText(frame, label, (plot_left, plot_top - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1, cv2.LINE_AA)
 
         if self.live_marker_x is not None:
             mx, _ = self._to_px(self.live_marker_x, 0)

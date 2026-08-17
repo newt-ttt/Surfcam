@@ -19,7 +19,7 @@ from pygrabber.dshow_graph import FilterGraph
 from ultralytics import YOLO
 
 CAMERA_NAME_HINT = "C270"
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "face_yolov8n.pt"
+MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "training" / "models" / "face" / "face_yolov8n.pt"
 
 
 def find_camera_index(name_hint: str) -> int:

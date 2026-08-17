@@ -1,7 +1,7 @@
 """
 Surfcam prototype - standalone smoke test for the speed curve editor
 (speed_curve.CurveEditor), with no camera/Pi/network required. Useful for
-trying out dragging/adding/removing points and confirming they persist to
+trying out the k/x0 trackbars and confirming changes persist to
 prototype/tracking_tuning.json before wiring it into the full tracking loop.
 
 A marker sweeps back and forth across the curve on its own, standing in
@@ -32,8 +32,7 @@ def main():
     tuning = TuningConfig.load(TUNING_CONFIG_PATH)
     editor = CurveEditor(tuning, TUNING_CONFIG_PATH)
     print(f"Editing {TUNING_CONFIG_PATH}")
-    print("Drag points to move them, double-click empty space to add a point,")
-    print("double-click a point to remove it. Press 'q' to quit.")
+    print("Drag the k/x0 trackbars in the curve window. Press 'q' to quit.")
 
     start = time.time()
     try:

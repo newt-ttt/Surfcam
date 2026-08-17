@@ -20,11 +20,11 @@ from pygrabber.dshow_graph import FilterGraph
 from ultralytics import YOLO
 
 CAMERA_NAME_HINT = "C270"
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "training" / "models"
 # yolo26n.pt: newer generation, smaller (2.4M params), higher mAP, and faster
 # (NMS-free) than yolov8n.pt - see research discussion. Swap back to
 # "yolov8n.pt" here to A/B compare; both use the same 80-class COCO labels.
-MODEL_NAME = str(MODELS_DIR / "yolo26n.pt")
+MODEL_NAME = str(MODELS_DIR / "base_coco" / "yolo26n.pt")
 PERSON_CLASS_ID = 0
 
 

@@ -41,19 +41,19 @@ from speed_curve import CurveEditor, TuningConfig
 # "face" for indoor testing, "person" for outdoor tracking.
 TARGET_MODE = "person"
 
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "training" / "models"
 
 if TARGET_MODE == "face":
-    MODEL_NAME = str(MODELS_DIR / "face_yolov8n.pt")
+    MODEL_NAME = str(MODELS_DIR / "face" / "face_yolov8n.pt")
     TRACK_CLASSES = None  # face model is already single-class
 else:
-    MODEL_NAME = str(MODELS_DIR / "yolo26n.pt")
+    MODEL_NAME = str(MODELS_DIR / "base_coco" / "yolo26n.pt")
     TRACK_CLASSES = [0]  # COCO person class
 
 CAMERA_NAME_HINT = "C270"
 FALLBACK_CAMERA_INDEX = 0  # laptop's built-in webcam, if no C270 is found
 
-# Show the live-draggable speed-curve editor window. Off by default - the JSON
+# Show the live speed-curve editor window (k/x0 trackbars). Off by default - the JSON
 # tuning is used as-is; set True to visually tune the curve (edits persist to
 # tracking_tuning.json). Disabling it also drops a second imshow per frame.
 SHOW_CURVE_UI = False
@@ -106,6 +106,13 @@ TUNING_CONFIG_PATH = Path(__file__).resolve().parent.parent / "tracking_tuning.j
 # was ~37 ms/frame of overhead, confirmed unnecessary even while panning
 # the physical rig. See botsort_nogmc.yaml / research.md's GMC section.
 TRACKER_CONFIG = str(Path(__file__).resolve().parent.parent / "botsort_nogmc.yaml")
+
+# A target must clear this confidence AND hold a track for MIN_TRACK_FRAMES
+# straight frames before it can be locked onto. Filters one-off flicker
+# false positives (birds, spray, glare) that rarely sustain a track, without
+# needing to know what actually caused the detection.
+MIN_TARGET_CONF = 0.35
+MIN_TRACK_FRAMES = 5
 
 latest_frame = None
 frame_lock = threading.Lock()
@@ -204,6 +211,8 @@ def main():
     pan_velocity = 0.0
     tilt_velocity = 0.0
 
+    track_streaks = {}  # track id -> consecutive frames held, for the lock-on filter below
+
     send_servo_command(servo_sock, pi_ip, servo_port, pan_angle, tilt_angle)
     auto_tracking = False
     print("Auto-tracking is OFF. Press 'a' to enable, 'q' to quit.")
@@ -246,20 +255,38 @@ def main():
             )
             result = results[0]
 
-            # Pick the target: largest bounding box (closest / most prominent person/face/etc)
+            # Track-hold streaks: reset to 0 the instant a track drops out, so a
+            # target only becomes lock-eligible after MIN_TRACK_FRAMES straight
+            # frames. Untracked boxes (id is None) never accumulate a streak.
+            seen_ids = set()
+            if result.boxes is not None:
+                for box in result.boxes:
+                    if box.id is None:
+                        continue
+                    tid = int(box.id[0])
+                    seen_ids.add(tid)
+                    track_streaks[tid] = track_streaks.get(tid, 0) + 1
+            track_streaks = {tid: streak for tid, streak in track_streaks.items() if tid in seen_ids}
+
+            # Pick the target: largest bounding box among tracks that have cleared
+            # both the confidence floor and the hold-streak requirement above.
             target_box = None
             target_id = None
             target_conf = None
             best_area = 0
             if result.boxes is not None:
                 for box in result.boxes:
+                    conf = float(box.conf[0])
+                    tid = int(box.id[0]) if box.id is not None else None
+                    if conf < MIN_TARGET_CONF or tid is None or track_streaks.get(tid, 0) < MIN_TRACK_FRAMES:
+                        continue
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     area = (x2 - x1) * (y2 - y1)
                     if area > best_area:
                         best_area = area
                         target_box = (int(x1), int(y1), int(x2), int(y2))
-                        target_id = int(box.id[0]) if box.id is not None else None
-                        target_conf = float(box.conf[0])
+                        target_id = tid
+                        target_conf = conf
 
             # Draw all detections faintly, largest target in bright green, all others in grey
             if result.boxes is not None:

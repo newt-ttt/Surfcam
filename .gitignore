@@ -6,11 +6,9 @@
 !research.md
 !README.md
 
-# Model weights / large binary assets
-*.pt
-*.onnx
-*.engine
-mobileclip2_b.ts
+# Training assets (datasets, model weights, run outputs) and media (detection videos, downloads)
+/training/
+/media/
 
 # Python
 __pycache__/
