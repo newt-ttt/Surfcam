@@ -9,13 +9,20 @@
 ## Overview
 
 <!-- What problem this solves, who it's for, and why it exists. 2-4 sentences. -->
-(this part also got deleted but this is the best i can recall of what i wrote)
-Surfcam is my project with the goal of creating an open-source, autonomous activity tracking setup for surfers to leave alone on the beach while they go about catching waves. I aim to address certain reported issues with existing surf tracking solutions, such as the SoloShot3 (link needed), as well as provide people the means to recreate the project on their own with their own cameras. Existing products on the market, such as the SoloShot3, have had issues with GPS location drifting and annoying calibration, which I believe can be avoided in this case.
-## Features
-(this part also got deleted and i will revisit it later)
-<!-- Bullet list of what it actually does today. -->
+STATUS: Currently in a proof-of-concept stage, I'm working on making sure all components of this project broadly work together before committing to more expensive components time-wise and finance-wise. Currently, the current setup does a great job of tracking a person visually at ~10m range in low resolution and no physical zoom, and following them smoothly given the servos available. The next step will be integrating a GPS tag on the target + Low power radio communication between the tag and base station, to allow for a more precise aiming system besides pure computer-vision.
 
-## Demo
+Surfcam is my project with the goal of creating an open-source, autonomous activity tracking setup for surfers to leave alone on the beach while they go about catching waves. I aim to address certain reported issues with existing surf tracking solutions, such as the SoloShot3 (link needed), as well as provide people the means to recreate the project on their own with their own cameras. Existing products on the market, such as the SoloShot3, have had issues with GPS location drifting and annoying calibration, which I believe can be avoided in this case.
+
+## Features
+
+- Real-time person detection via YOLO26 computer vision
+- Confidence floor + N-frame hold streak to filter out one-off false positives (birds, spray, glare) before locking onto a target
+- Automatic target selection
+- Spring-follow pan/tilt control for damped, low-jitter aiming instead of direct proportional/PID control
+- Pi-side servo command interpolation (50Hz slew-rate loop) for smooth continuous motion between UDP updates
+- Split-machine architecture over raw UDP: Pi handles capture + servo drive, desktop/laptop handles detection/tracking/control
+- Debug overlay window (bounding boxes, target crosshair, track ID/confidence) for visualizing detection and tracking live
+- Multi-frame tracking with BoT-SORT (`persist=True`) so a person (surfer in the future) keeps the same ID across frames instead of being re-detected each time
 
 <!-- Screenshots, GIFs, or embedded/linked video of detection + tracking in action. -->
 
@@ -30,7 +37,7 @@ The current prototype loop is split across two machines: a Raspberry Pi 3B on th
 5. **Aim.** The target's pixel offset from the center of the frame converts to a pan/tilt angle delta, then runs through a spring-follow controller instead of direct proportional control, which damps overshoot and reduuces jitter by not snapping straight to the target. Max angular speed per axis is capped by a tunable sigmoid speed curve, so the servo eases in near center and hits full speed toward the frame edge.
 6. **Execute Movement.** Pan/tilt angle commands go back to the Pi as a fixed 8-byte UDP payload (two floats, no header), where the Pi drives the SG90 pan-tilt servos, clamped to a safe angle range.
 
-This is the prototype loop, built to validate detection/tracking/control on cheaper hardware and what I have on-hand before committing to the target build.
+This is the prototype/proof-of-concept loop, built to validate detection/tracking/control on cheaper hardware and what I have on-hand before committing to the target build.
 
 ## Tech Stack
 
@@ -76,7 +83,19 @@ This is the prototype loop, built to validate detection/tracking/control on chea
 
 ## Model & Training
 
-<!-- Dataset(s), model lineage/versions, training approach, evaluation metrics. -->
+All fine-tunes start from Ultralytics' pretrained YOLO26 checkpoints (`n`/`s`/`m`) and are trained 50 epochs at `imgsz=640` via `ultralytics`'s training API, with Roboflow-hosted datasets. `doube2_yolo26s.pt` is the current production weight and was additionally passed through a hard-negative mining round (retrained against false-positive crops pulled from real footage) to cut down on false triggers; its backup pre-hardneg weight is kept alongside as `doube2_yolo26s_PRE_hardneg_backup.pt`.
+
+The latest model does well with detecting and tracking surfers on a wave, but most noticebly struggles when too many objects are in frame, i.e. 100 surfers waiting for a wave, all in frame at once. This shouldn't be an issue when GPS is implemented, allowing for a rough reduction in FOV when the camera zooms in to the approximate location of the tagged surfer.
+
+| Model | Classes | Dataset (train / val images) | Precision | Recall | mAP50 | mAP50-95 |
+|---|---|---|---|---|---|---|
+| `surfai_v9_yolo26n` | 2 (`surfer`, `Surfer_Riding`) | Surfer-Detection-9 (317 / 90) | 80.9% | 72.6% | 81.9% | 37.0% |
+| `surfai_v9_yolo26s` | 2 (`surfer`, `Surfer_Riding`) | Surfer-Detection-9 (317 / 90) | 75.1% | 93.3% | 91.3% | 41.9% |
+| `surfai_v9_yolo26m` | 2 (`surfer`, `Surfer_Riding`) | Surfer-Detection-9 (317 / 90) | 80.3% | 79.9% | 83.6% | 41.4% |
+| `doube2_yolo26n` | 7 (surfer, surfer_ride, wave + 4 wave-state classes) | surfer_doube2_full (5672 / 1412) | 91.5% | 87.5% | 93.4% | 69.0% |
+| `doube2_yolo26s` (production, post-hardneg) | 7 (surfer, surfer_ride, wave + 4 wave-state classes) | surfer_doube2_full (5672 / 1412) | 90.1% | 88.9% | 94.1% | 70.1% |
+
+Metrics are from the final epoch's validation pass, as logged by Ultralytics to each run's `results.csv`. The live tracking pipeline only consumes the `surfer`/`surfer_ride` classes out of doube2's 7 (the wave-state classes are trained for future use but not yet acted on).
 
 ## Results
 
@@ -86,20 +105,16 @@ This is the prototype loop, built to validate detection/tracking/control on chea
 
 <!-- What's done, what's in progress, what's next. -->
 
-## Repository Structure
-
-<!-- Brief map of top-level folders/files and what lives where. -->
-
 ## Getting Started
 
 <!-- Prerequisites, installation, and how to run it. -->
 
 ## Lessons Learned
-
+TBD
 <!-- Notable challenges, dead ends, and what you'd do differently. -->
 
 ## Acknowledgments & Sources
-
+TBD
 <!-- Research references, datasets, libraries, and inspirations. -->
 
 ## Contact
