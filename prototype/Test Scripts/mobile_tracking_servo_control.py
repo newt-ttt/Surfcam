@@ -114,6 +114,15 @@ TRACKER_CONFIG = str(Path(__file__).resolve().parent.parent / "botsort_nogmc.yam
 MIN_TARGET_CONF = 0.35
 MIN_TRACK_FRAMES = 5
 
+# Adaptive scan window: crop to detect on instead of the full frame, sized off
+# the target's own bbox so it shrinks as they get smaller/farther and grows as
+# they get closer - keeps their apparent size in the model's input (and so
+# detection confidence) roughly stable across distance instead of always
+# paying to downscale the whole 1280x720 frame down to imgsz=640.
+ROI_MARGIN_FACTOR = 6.0  # scan window's width = target's largest side * this
+ROI_MIN_SIZE = 320       # floor on window width, px - room for real motion
+                          # between frames and a floor on crop quality
+
 latest_frame = None
 frame_lock = threading.Lock()
 frame_ready = threading.Event()
@@ -152,6 +161,22 @@ def find_camera_index(name_hint: str):
 
 def clamp(value, lo, hi):
     return max(lo, min(hi, value))
+
+
+def compute_roi(frame_w, frame_h, box):
+    """Full-frame (x1, y1, x2, y2) scan window centered on `box`, sized off
+    its largest side, same aspect ratio as the source frame, clamped to never
+    exceed it. None (scan the whole frame) if there's nothing to center on -
+    an empty window would strand a lost target instead of re-acquiring it."""
+    if box is None:
+        return None
+    x1, y1, x2, y2 = box
+    roi_w = clamp(max(x2 - x1, y2 - y1) * ROI_MARGIN_FACTOR, ROI_MIN_SIZE, frame_w)
+    roi_h = roi_w * frame_h / frame_w
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    roi_x1 = clamp(cx - roi_w / 2, 0, frame_w - roi_w)
+    roi_y1 = clamp(cy - roi_h / 2, 0, frame_h - roi_h)
+    return (int(roi_x1), int(roi_y1), int(roi_x1 + roi_w), int(roi_y1 + roi_h))
 
 
 def send_servo_command(servo_sock, pi_ip, servo_port, pan_angle, tilt_angle):
@@ -212,6 +237,7 @@ def main():
     tilt_velocity = 0.0
 
     track_streaks = {}  # track id -> consecutive frames held, for the lock-on filter below
+    current_roi = None  # adaptive scan window, full-frame (x1,y1,x2,y2); None = whole frame
 
     send_servo_command(servo_sock, pi_ip, servo_port, pan_angle, tilt_angle)
     auto_tracking = False
@@ -246,14 +272,30 @@ def main():
             h, w = frame.shape[:2]
             frame_cx, frame_cy = w // 2, h // 2
 
+            # Scan last frame's adaptive window instead of the full frame, if we
+            # have one. scan_roi is snapshotted here (not current_roi directly)
+            # because current_roi gets recomputed below for the *next* frame.
+            scan_roi = current_roi
+            if scan_roi is not None:
+                rx1, ry1, rx2, ry2 = scan_roi
+                scan_frame = frame[ry1:ry2, rx1:rx2].copy()  # contiguous copy for the tracker
+                roi_off_x, roi_off_y = rx1, ry1
+            else:
+                scan_frame = frame
+                roi_off_x, roi_off_y = 0, 0
+
             results = model.track(
-                frame,
+                scan_frame,
                 classes=TRACK_CLASSES,
                 persist=True,
                 verbose=False,
                 tracker=TRACKER_CONFIG,
             )
             result = results[0]
+
+            def to_full_frame(box):
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                return int(x1 + roi_off_x), int(y1 + roi_off_y), int(x2 + roi_off_x), int(y2 + roi_off_y)
 
             # Track-hold streaks: reset to 0 the instant a track drops out, so a
             # target only becomes lock-eligible after MIN_TRACK_FRAMES straight
@@ -270,32 +312,49 @@ def main():
 
             # Pick the target: largest bounding box among tracks that have cleared
             # both the confidence floor and the hold-streak requirement above.
+            # Separately track the largest confidence-only box (best_raw_box) -
+            # next frame's scan window is sized off that, not the streak-gated
+            # target, so a resized crop churning track IDs (streak resets) can't
+            # also collapse the window that's supposed to help it recover.
             target_box = None
             target_id = None
             target_conf = None
             best_area = 0
+            best_raw_box = None
+            best_raw_area = 0
             if result.boxes is not None:
                 for box in result.boxes:
                     conf = float(box.conf[0])
-                    tid = int(box.id[0]) if box.id is not None else None
-                    if conf < MIN_TARGET_CONF or tid is None or track_streaks.get(tid, 0) < MIN_TRACK_FRAMES:
+                    if conf < MIN_TARGET_CONF:
                         continue
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    x1, y1, x2, y2 = to_full_frame(box)
                     area = (x2 - x1) * (y2 - y1)
+                    if area > best_raw_area:
+                        best_raw_area = area
+                        best_raw_box = (x1, y1, x2, y2)
+
+                    tid = int(box.id[0]) if box.id is not None else None
+                    if tid is None or track_streaks.get(tid, 0) < MIN_TRACK_FRAMES:
+                        continue
                     if area > best_area:
                         best_area = area
-                        target_box = (int(x1), int(y1), int(x2), int(y2))
+                        target_box = (x1, y1, x2, y2)
                         target_id = tid
                         target_conf = conf
+
+            current_roi = compute_roi(w, h, best_raw_box)
 
             # Draw all detections faintly, largest target in bright green, all others in grey
             if result.boxes is not None:
                 for box in result.boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    x1, y1, x2, y2 = to_full_frame(box)
                     is_target = (x1, y1, x2, y2) == target_box
                     color = (0, 255, 0) if is_target else (100, 100, 100)
                     thickness = 2 if is_target else 1
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+
+            if scan_roi is not None:
+                cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (255, 255, 255), 1)
 
             cv2.drawMarker(frame, (frame_cx, frame_cy), (0, 0, 255),
                             markerType=cv2.MARKER_CROSS, markerSize=20, thickness=2)
@@ -356,7 +415,8 @@ def main():
                 fps = inst_fps if fps == 0.0 else 0.9 * fps + 0.1 * inst_fps  # seed, then smooth
             prev_time = now
             status = "ON" if auto_tracking else "OFF"
-            cv2.putText(frame, f"FPS: {fps:.1f}  auto-tracking: {status}", (20, 30),
+            scan_label = f"{rx2 - rx1}x{ry2 - ry1}" if scan_roi is not None else "full"
+            cv2.putText(frame, f"FPS: {fps:.1f}  auto-tracking: {status}  scan: {scan_label}", (20, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame, f"pan={pan_angle:.1f} ({pan_velocity:+.1f} deg/s)  "
                                 f"tilt={tilt_angle:.1f} ({tilt_velocity:+.1f} deg/s)", (20, 690),
