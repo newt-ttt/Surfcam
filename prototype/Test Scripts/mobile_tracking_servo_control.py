@@ -353,7 +353,11 @@ def main():
                     thickness = 2 if is_target else 1
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
-            if scan_roi is not None:
+            # Skip drawing when the window == the full frame - that box sits
+            # exactly on the frame's outer edge and is invisible/clipped, which
+            # otherwise reads as "not drawing" rather than "not cropping yet".
+            if scan_roi is not None and (rx2 - rx1) < w:
+                cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (0, 0, 0), 3)
                 cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (255, 255, 255), 1)
 
             cv2.drawMarker(frame, (frame_cx, frame_cy), (0, 0, 255),
