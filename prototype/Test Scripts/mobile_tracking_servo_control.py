@@ -131,6 +131,12 @@ ROI_MIN_SIZE = 320       # floor on window width, px - room for real motion
 # response speed doesn't depend on FPS - see main()'s use of it.
 ROI_SIZE_SMOOTHING_TAU_S = 0.4
 
+# On loss, the window doesn't snap back to the full frame - it holds its last
+# center and grows from its last size back up to full-frame size over this
+# many seconds, so a brief flicker barely widens the window at all while a
+# real, sustained loss still recovers full-frame coverage to re-acquire.
+ROI_LOST_GROW_DURATION_S = 5.0
+
 latest_frame = None
 frame_lock = threading.Lock()
 frame_ready = threading.Event()
@@ -182,6 +188,19 @@ def compute_roi(frame_w, frame_h, box):
     roi_w = clamp(max(x2 - x1, y2 - y1) * ROI_MARGIN_FACTOR, ROI_MIN_SIZE, frame_w)
     roi_h = roi_w * frame_h / frame_w
     cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    roi_x1 = clamp(cx - roi_w / 2, 0, frame_w - roi_w)
+    roi_y1 = clamp(cy - roi_h / 2, 0, frame_h - roi_h)
+    return (int(roi_x1), int(roi_y1), int(roi_x1 + roi_w), int(roi_y1 + roi_h))
+
+
+def grow_roi(start_roi, frac, frame_w, frame_h):
+    """`start_roi` linearly widened toward the full frame by `frac` (0..1),
+    center held fixed, clamped to stay in-bounds. frac=0 returns start_roi
+    unchanged; frac=1 returns the full frame."""
+    sx1, sy1, sx2, sy2 = start_roi
+    cx, cy = (sx1 + sx2) / 2, (sy1 + sy2) / 2
+    roi_w = (sx2 - sx1) + (frame_w - (sx2 - sx1)) * frac
+    roi_h = (sy2 - sy1) + (frame_h - (sy2 - sy1)) * frac
     roi_x1 = clamp(cx - roi_w / 2, 0, frame_w - roi_w)
     roi_y1 = clamp(cy - roi_h / 2, 0, frame_h - roi_h)
     return (int(roi_x1), int(roi_y1), int(roi_x1 + roi_w), int(roi_y1 + roi_h))
@@ -247,6 +266,8 @@ def main():
     track_streaks = {}  # track id -> consecutive frames held, for the lock-on filter below
     current_roi = None  # adaptive scan window, full-frame (x1,y1,x2,y2); None = whole frame
     smoothed_target_size = None  # low-pass filtered target size driving the window's size
+    lost_roi_start = None  # window frozen at the moment of loss, growth base for grow_roi()
+    lost_elapsed = 0.0      # seconds since that loss, drives grow_roi()'s frac
 
     send_servo_command(servo_sock, pi_ip, servo_port, pan_angle, tilt_angle)
     auto_tracking = False
@@ -363,9 +384,22 @@ def main():
                 half = smoothed_target_size / 2
                 smoothed_box = (cx - half, cy - half, cx + half, cy + half)
                 current_roi = compute_roi(w, h, smoothed_box)
+                lost_roi_start = None
+                lost_elapsed = 0.0
             else:
                 smoothed_target_size = None
-                current_roi = None
+                # Hold the window at its last center and grow it toward the
+                # full frame over ROI_LOST_GROW_DURATION_S rather than
+                # snapping straight to full frame - see the constant's
+                # comment. Freeze the growth base on the first lost frame
+                # only, so later lost frames keep widening from there.
+                if lost_roi_start is None:
+                    lost_roi_start = scan_roi if scan_roi is not None else (0, 0, w, h)
+                    lost_elapsed = 0.0
+                else:
+                    lost_elapsed += dt
+                frac = clamp(lost_elapsed / ROI_LOST_GROW_DURATION_S, 0.0, 1.0)
+                current_roi = grow_roi(lost_roi_start, frac, w, h)
 
             # Draw all detections faintly, largest target in bright green, all others in grey
             if result.boxes is not None:
