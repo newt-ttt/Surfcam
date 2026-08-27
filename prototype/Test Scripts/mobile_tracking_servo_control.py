@@ -122,6 +122,14 @@ MIN_TRACK_FRAMES = 5
 ROI_MARGIN_FACTOR = 6.0  # scan window's width = target's largest side * this
 ROI_MIN_SIZE = 320       # floor on window width, px - room for real motion
                           # between frames and a floor on crop quality
+# The window is re-centered on the target every frame (needs to track real
+# motion immediately), but its SIZE is low-pass filtered against the target's
+# raw bbox size instead of following it frame to frame - a step-change in
+# frame-to-frame bbox size (pose, detection jitter) would otherwise get
+# amplified 6x by ROI_MARGIN_FACTOR straight into the crop, yanking the
+# window in and out. Time-constant based (not a fixed per-frame alpha) so the
+# response speed doesn't depend on FPS - see main()'s use of it.
+ROI_SIZE_SMOOTHING_TAU_S = 0.4
 
 latest_frame = None
 frame_lock = threading.Lock()
@@ -238,6 +246,7 @@ def main():
 
     track_streaks = {}  # track id -> consecutive frames held, for the lock-on filter below
     current_roi = None  # adaptive scan window, full-frame (x1,y1,x2,y2); None = whole frame
+    smoothed_target_size = None  # low-pass filtered target size driving the window's size
 
     send_servo_command(servo_sock, pi_ip, servo_port, pan_angle, tilt_angle)
     auto_tracking = False
@@ -342,7 +351,21 @@ def main():
                         target_id = tid
                         target_conf = conf
 
-            current_roi = compute_roi(w, h, best_raw_box)
+            if best_raw_box is not None:
+                x1, y1, x2, y2 = best_raw_box
+                raw_size = max(x2 - x1, y2 - y1)
+                if smoothed_target_size is None:
+                    smoothed_target_size = raw_size  # seed on (re)acquisition, no lag
+                else:
+                    alpha = 1 - math.exp(-dt / ROI_SIZE_SMOOTHING_TAU_S)
+                    smoothed_target_size += alpha * (raw_size - smoothed_target_size)
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                half = smoothed_target_size / 2
+                smoothed_box = (cx - half, cy - half, cx + half, cy + half)
+                current_roi = compute_roi(w, h, smoothed_box)
+            else:
+                smoothed_target_size = None
+                current_roi = None
 
             # Draw all detections faintly, largest target in bright green, all others in grey
             if result.boxes is not None:
